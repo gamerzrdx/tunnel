@@ -1,108 +1,168 @@
 #!/bin/bash
 
 #==============================================================================#
-#                                 🚇 Tunnelsmith 🚇                              #
-#           A friendly script for creating reverse SSH tunnels.                #
+#                       🚇 Advanced Tunnelsmith Mega 🚇                         #
+#                   TCP / UDP / TCP+UDP Reverse Tunnel Manager                 #
 #==============================================================================#
 
 # --- Configuration ---
 REMOTE_HOST="tunnel.nexronodes.qzz.io"
 REMOTE_USER="root"
 SSH_PORT="58255"
+LOG_DIR="/tmp/tunnelsmith_logs"
 
-# --- Colors and Emojis ---
-C_RESET='\033[0m'
-C_RED='\033[0;31m'
-C_GREEN='\033[0;32m'
-C_YELLOW='\033[0;33m'
-C_BLUE='\033[0;34m'
-C_PURPLE='\033[0;35m'
-C_CYAN='\033[0;36m'
-C_WHITE='\033[1;37m'
+mkdir -p $LOG_DIR
 
-EMOJI_TUNNEL="🚇"
-EMOJI_SUCCESS="✅"
-EMOJI_ERROR="❌"
-EMOJI_STOP="🛑"
+# --- Colors & Emojis ---
+C_RESET='\033[0m'; C_RED='\033[0;31m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'
+C_BLUE='\033[0;34m'; C_PURPLE='\033[0;35m'; C_CYAN='\033[0;36m'; C_WHITE='\033[1;37m'
+
+EMOJI_TUNNEL="🚇"; 
+EMOJI_SUCCESS="✅"; 
+EMOJI_ERROR="❌"; 
+EMOJI_STOP="🛑"; 
 EMOJI_LIST="📋"
+EMOJI_GEAR="⚙️"; 
+EMOJI_LINK="🔗"; 
+EMOJI_SPARKLE="✨"; 
 EMOJI_WAVE="👋"
-EMOJI_GEAR="⚙️"
-EMOJI_LINK="🔗"
-EMOJI_SPARKLE="✨"
 
 # --- Helper Functions ---
 usage() {
-    echo -e "${C_WHITE}🚇 Tunnelsmith - friendly tunnel manager${C_RESET}"
-    echo -e "---------------------------------------------------"
-    echo -e "${C_YELLOW}Usage:${C_RESET} ${C_CYAN}$0 ${C_PURPLE}<command> [options]${C_RESET}\n"
+    echo -e "${C_WHITE}🚇 Advanced Tunnelsmith Mega${C_RESET}"
+    echo -e "Usage: $0 <command> [options]\n"
     echo -e "${C_PURPLE}Commands:${C_RESET}"
-    echo -e "  ${C_CYAN}make <local_port>${C_RESET}   ${EMOJI_GEAR} Create a new tunnel from a local port."
-    echo -e "                         Example: ${C_CYAN}$0 make 65535${C_RESET}\n"
-    echo -e "  ${C_CYAN}list${C_RESET}                ${EMOJI_LIST} List all active tunnels.\n"
-    echo -e "  ${C_CYAN}kill <pid>${C_RESET}          ${EMOJI_STOP} Stop a specific tunnel by PID."
-    echo -e "                         Example: ${C_CYAN}$0 kill 12345${C_RESET}\n"
-    echo -e "  ${C_CYAN}killall${C_RESET}             ${EMOJI_STOP} Stop all active tunnels.\n"
-    echo -e "  ${C_CYAN}help${C_RESET}                ${EMOJI_WAVE} Show this help message."
-    echo -e "---------------------------------------------------"
+    echo -e "  make <local_port> [tcp|udp|both]   ${EMOJI_GEAR} Create a tunnel"
+    echo -e "  create-multi <local_port> <count> [tcp|udp|both]  ${EMOJI_GEAR} Create multiple tunnels"
+    echo -e "  list                               ${EMOJI_LIST} Show active tunnels"
+    echo -e "  show                               ${EMOJI_LIST} Show detailed tunnel info"
+    echo -e "  kill <pid>                         ${EMOJI_STOP} Kill a tunnel"
+    echo -e "  killall                            ${EMOJI_STOP} Kill all tunnels"
+    echo -e "  log-tail <pid>                     ${EMOJI_LINK} Tail tunnel log"
+    echo -e "  check-port <port>                  ${EMOJI_SPARKLE} Check remote port availability"
+    echo -e "  speed-test <local_port>            ${EMOJI_SPARKLE} TCP/UDP basic ping test"
+    echo -e "  domain-check                       ${EMOJI_SPARKLE} Check if domain resolves"
+    echo -e "  help                               ${EMOJI_WAVE} Show this help"
 }
 
-# --- Main Logic ---
-if [ -z "$1" ]; then
-    usage
-    exit 1
-fi
+# --- Check args ---
+if [ -z "$1" ]; then usage; exit 1; fi
 
+# --- Functions ---
+create_tunnel() {
+    LOCAL_PORT=$1
+    TYPE=${2:-tcp}
+    REMOTE_PORT=${3:-$((RANDOM % 55535 + 10000))}
+    TCP_PID=""
+    UDP_PID=""
+    LOG_FILE="$LOG_DIR/tunnel_${TYPE}_${REMOTE_PORT}.log"
+
+    echo -e "${EMOJI_TUNNEL} Creating $TYPE tunnel: localhost:$LOCAL_PORT -> $REMOTE_HOST:$REMOTE_PORT"
+
+    case "$TYPE" in
+        tcp)
+            nohup ssh -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes \
+                -o ServerAliveInterval=60 -N -R ${REMOTE_PORT}:localhost:${LOCAL_PORT} \
+                ${REMOTE_USER}@${REMOTE_HOST} -p ${SSH_PORT} &> $LOG_FILE &
+            TCP_PID=$!
+            ;;
+        udp)
+            nohup socat UDP-LISTEN:${REMOTE_PORT},fork UDP:localhost:${LOCAL_PORT} &> $LOG_FILE &
+            UDP_PID=$!
+            ;;
+        both)
+            nohup ssh -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes \
+                -o ServerAliveInterval=60 -N -R ${REMOTE_PORT}:localhost:${LOCAL_PORT} \
+                ${REMOTE_USER}@${REMOTE_HOST} -p ${SSH_PORT} &> $LOG_FILE &
+            TCP_PID=$!
+            nohup socat UDP-LISTEN:${REMOTE_PORT},fork UDP:localhost:${LOCAL_PORT} &> $LOG_FILE &
+            UDP_PID=$!
+            ;;
+        *)
+            echo -e "${EMOJI_ERROR} Unknown type $TYPE"; return 1
+            ;;
+    esac
+
+    sleep 2
+    [ -n "$TCP_PID" ] && echo -e "${EMOJI_SUCCESS} TCP Tunnel PID: $TCP_PID"
+    [ -n "$UDP_PID" ] && echo -e "${EMOJI_SUCCESS} UDP Tunnel PID: $UDP_PID"
+    echo -e "Remote Port: $REMOTE_PORT | Log: $LOG_FILE"
+}
+
+list_tunnels() {
+    echo -e "${EMOJI_LIST} Active tunnels:"
+    ps -ef | grep -E "ssh.*-R|socat UDP" | grep -v grep
+}
+
+show_tunnels() {
+    echo -e "${EMOJI_LIST} Detailed tunnel info:"
+    for file in $LOG_DIR/*.log; do
+        [ -f "$file" ] && echo -e "\nFile: $file\n$(tail -n 5 $file)"
+    done
+}
+
+kill_tunnel() {
+    PID=$1
+    if [ -z "$PID" ]; then echo "Provide PID"; return; fi
+    kill $PID && echo -e "${EMOJI_STOP} Killed tunnel $PID"
+}
+
+kill_all_tunnels() {
+    echo -e "${EMOJI_STOP} Killing all tunnels..."
+    PIDS=$(ps -ef | grep -E "ssh.*-R|socat UDP" | grep -v grep | awk '{print $2}')
+    [ -n "$PIDS" ] && kill $PIDS && echo "All tunnels terminated."
+}
+
+log_tail() {
+    PID=$1
+    LOG=$(ls $LOG_DIR | grep $PID)
+    if [ -f "$LOG_DIR/$LOG" ]; then
+        tail -f "$LOG_DIR/$LOG"
+    else
+        echo "Log not found for PID $PID"
+    fi
+}
+
+check_port() {
+    PORT=$1
+    nc -zv $REMOTE_HOST $PORT
+}
+
+speed_test() {
+    PORT=$1
+    ping -c 3 $REMOTE_HOST
+    echo "UDP test requires socat, skipped"
+}
+
+domain_check() {
+    nslookup $REMOTE_HOST
+}
+
+create_multi() {
+    LOCAL_PORT=$1
+    COUNT=$2
+    TYPE=${3:-tcp}
+    for ((i=0;i<$COUNT;i++)); do
+        create_tunnel $LOCAL_PORT $TYPE
+        sleep 1
+    done
+}
+
+# --- Main Case ---
 case "$1" in
-    make)
-        LOCAL_PORT=$2
-        if [[ -z "$LOCAL_PORT" || ! "$LOCAL_PORT" =~ ^[0-9]+$ ]]; then
-            echo -e "\n${EMOJI_ERROR} ${C_RED}Error: You must provide a valid local port number.${C_RESET}"
-            echo -e "Example: ${C_CYAN}$0 make 65535${C_RESET}\n"
-            exit 1
-        fi
-
-        REMOTE_PORT=$(( RANDOM % 55535 + 10000 ))
-
-        echo -e "\n${EMOJI_TUNNEL} ${C_BLUE}Creating tunnel...${C_RESET}"
-        echo -e "${EMOJI_GEAR} ${C_YELLOW}Connecting to ${C_WHITE}${REMOTE_HOST}${C_RESET}"
-        echo -e "${EMOJI_LINK} ${C_CYAN}Forwarding:${C_RESET} Local Port ${C_WHITE}${LOCAL_PORT}${C_RESET} -> ${C_WHITE}${REMOTE_HOST}:${REMOTE_PORT}${C_RESET}\n"
-
-        nohup ssh -o StrictHostKeyChecking=no -o ExitOnForwardFailure=yes -o ServerAliveInterval=60 \
-            -N -R ${REMOTE_PORT}:localhost:${LOCAL_PORT} \
-            ${REMOTE_USER}@${REMOTE_HOST} -p ${SSH_PORT} &> /tmp/tunnel_${REMOTE_PORT}.log &
-
-        PID=$!
-        sleep 2
-
-        if ps -p $PID > /dev/null; then
-            echo -e "${EMOJI_SUCCESS} ${C_GREEN}Tunnel is active!${C_RESET}"
-            echo -e "  ${C_WHITE}PID:${C_RESET} ${C_YELLOW}${PID}${C_RESET}"
-            echo -e "  ${C_WHITE}URL:${C_RESET} ${C_CYAN}http://${REMOTE_HOST}:${REMOTE_PORT}${C_RESET}"
-            echo -e "  ${C_WHITE}Log:${C_RESET} /tmp/tunnel_${REMOTE_PORT}.log"
-            echo -e "\n${EMOJI_STOP} Stop tunnel: ${C_PURPLE}$0 kill ${PID}${C_RESET}\n"
-        else
-            echo -e "${EMOJI_ERROR} ${C_RED}Tunnel failed to start.${C_RESET}"
-            echo -e "Check log: ${C_YELLOW}cat /tmp/tunnel_${REMOTE_PORT}.log${C_RESET}\n"
-            [ ! -s "/tmp/tunnel_${REMOTE_PORT}.log" ] && rm "/tmp/tunnel_${REMOTE_PORT}.log"
-        fi
-        ;;
-
-    list)
-        echo -e "\n${EMOJI_LIST} ${C_BLUE}Active tunnels on ${C_WHITE}${REMOTE_HOST}${C_RESET}..."
-        PIDS=$(pgrep -af "ssh.*-R.*${REMOTE_HOST}")
-        if [ -n "$PIDS" ]; then
-            echo -e "------------------------------------------------------"
-            echo -e "${C_WHITE}PID\tREMOTE PORT\tLOCAL PORT${C_RESET}"
-            echo -e "------------------------------------------------------"
-            while read -r line; do
-                pid=$(echo "$line" | awk '{print $1}')
-                remote_p=$(echo "$line" | sed -n 's/.*-R \([0-9]*\):.*/\1/p')
-                local_p=$(echo "$line" | sed -n 's/.*localhost:\([0-9]*\).*/\1/p')
-                echo -e "${C_YELLOW}${pid}${C_RESET}\t${C_CYAN}${remote_p}${C_RESET}\t\t${C_PURPLE}${local_p}${C_RESET}"
-            done <<< "$PIDS"
-            echo -e "------------------------------------------------------\n"
-        else
-            echo -e "${EMOJI_SPARKLE} ${C_GREEN}No active tunnels found.${C_RESET}\n"
+    make) create_tunnel $2 $3 ;;
+    create-multi) create_multi $2 $3 $4 ;;
+    list) list_tunnels ;;
+    show) show_tunnels ;;
+    kill) kill_tunnel $2 ;;
+    killall) kill_all_tunnels ;;
+    log-tail) log_tail $2 ;;
+    check-port) check_port $2 ;;
+    speed-test) speed_test $2 ;;
+    domain-check) domain_check ;;
+    help) usage ;;
+    *) usage ;;
+esac            echo -e "${EMOJI_SPARKLE} ${C_GREEN}No active tunnels found.${C_RESET}\n"
         fi
         ;;
 
